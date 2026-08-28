@@ -1,6 +1,16 @@
 name: Build EOAP test image
 
 on:
+  push:
+    branches:
+      - eoap-compliance
+    paths:
+      - "Dockerfile"
+      - "processor.py"
+      - "requirements.txt"
+      - "src/**"
+      - ".github/workflows/build-eoap-image.yml"
+
   workflow_dispatch:
 
 permissions:
