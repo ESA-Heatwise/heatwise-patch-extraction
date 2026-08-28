@@ -31,6 +31,10 @@ from src.heatwise_patch_extraction.sampling import (
 )
 from src.heatwise_patch_extraction.geo_split import run_geo_split
 from src.heatwise_patch_extraction.patch_io import write_patch_h5
+from src.heatwise_patch_extraction.stac_io import (
+    inputs_from_stac,
+    write_output_catalog,
+)
 
 
 def run_extraction(cfg: dict) -> None:
@@ -194,8 +198,10 @@ def run_extraction(cfg: dict) -> None:
         cnt = [int(((lab == c) & (split == s)).sum()) for s in range(3)]
         print(f"  class {c}: " + " ".join(f"{n}={v}" for n, v in zip(names, cnt)))
 
+    output_h5 = cfg["output"]["h5_path"]
+    
     write_patch_h5(
-        h5_path=cfg["output"]["h5_path"],
+        h5_path=output_h5,
         sen2=X_sen2, hsi_bs=X_hsi, label_onehot=y_onehot,
         split=split, geo_isolated=geo_flag, coords=xy,
         class_order=class_order,
@@ -203,17 +209,49 @@ def run_extraction(cfg: dict) -> None:
         super_block_m=split_cfg.get("super_block_m", 2500.0),
         hsi_pca=X_pca, lst=X_lst, lst_valid=X_lst_valid,
     )
+    
+    catalog_path = write_output_catalog(
+        output_h5=output_h5,
+        city=city,
+    )
+    
+    print(f"[processor] Output H5: {output_h5}")
+    print(f"[processor] Output STAC catalog: {catalog_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="HEATWISE geo-isolated patch extraction")
-    parser.add_argument("--config", required=True)
-    parser.add_argument("--output-h5", help="Overrides the config's `output.h5_path` if given")
+    parser = argparse.ArgumentParser(
+        description="HEATWISE geo-isolated patch extraction"
+    )
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="YAML processing configuration.",
+    )
+    parser.add_argument(
+        "--input-catalog",
+        help=(
+            "Path to the staged STAC catalog.json containing the Sentinel-2, "
+            "HSI, and optional LST/PCA input assets."
+        ),
+    )
+    parser.add_argument(
+        "--output-h5",
+        help="Overrides the config's `output.h5_path` if given.",
+    )
     args = parser.parse_args()
     with open(args.config, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+    cfg = yaml.safe_load(f)
+
+    if args.input_catalog:
+        cfg["inputs"] = inputs_from_stac(
+            args.input_catalog,
+            city=cfg.get("city"),
+        )
+    
     if args.output_h5:
         cfg.setdefault("output", {})["h5_path"] = args.output_h5
+    
     run_extraction(cfg)
 
 
