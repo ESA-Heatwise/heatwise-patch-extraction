@@ -1,9 +1,13 @@
 # heatwise-patch-extraction
 
-Stage 2 of the HEATWISE pipeline: turns a city's polygon labels (KML/SHP) plus
-its Sentinel-2 / HSI (+ optional LST / PCA) rasters into a single H5 patch
-dataset with a **geographically isolated** train/val/test split (super-block
-spatial hold-out, so train and test patches never overlap in space).
+Stage 2 of the HEATWISE LCZ pipeline: extracts aligned image patches from a
+city's Sentinel-2, hyperspectral, and optional LST/PCA products using
+polygon-based LCZ labels, and writes a single HDF5 dataset with spatially
+separated train/validation/test subsets.
+
+The processor supports EOAP-compatible STAC staging and stage-out. EO raster
+inputs are supplied through a staged STAC catalog, while the generated HDF5
+dataset is described by a STAC catalog written alongside the output product.
 
 ## Install
 
@@ -11,124 +15,313 @@ spatial hold-out, so train and test patches never overlap in space).
 pip install -r requirements.txt
 ```
 
-## Run
+## Local execution
 
-```bash
-python processor.py --config config/example_config.yaml
-```
-
-Copy `config/example_config.yaml` per city, point `inputs.*` at the outputs of
-`heatwise-hsi-lst-prep`, and flip `toggles.use_lst` / `toggles.use_pca` on or
-off as needed.
-
-Output H5 fields:
-- `sen2`, `hsi_bs`: patch stacks `(N, H, W, C)`
-- `hsi_pca` (if `use_pca`): patch stack `(N, H, W, C)`
-- `lst`, `lst_valid` (if `use_lst`): LST patch stack + per-patch validity flag
-  (0 = patch touched a nodata/out-of-bounds edge and was filled with the
-  patch-local mean)
-- `label`: one-hot labels `(N, num_classes)`, dimension order = `class_order`
-- `split`: 0=train, 1=val, 2=test
-- `geo_isolated`: 1 if the patch's split came from full spatial isolation,
-  0 if it came from the random-stratified fallback (classes with too few
-  super-blocks to isolate geographically)
-- `coords`: patch center coordinates in the target CRS
-
-## Notes
-
-- One run processes one city (the geo-split is inherently a single spatial
-  domain); run it once per city and point `heatwise-lcz-classification`'s
-  training step at a directory containing multiple H5 files to combine them.
-- The old two-pass design (extract patches, then separately backfill an `lst`
-  field into an existing H5 by coordinate lookup) has been folded into a
-  single pass: LST windows are read from the same normalized raster that
-  `heatwise-hsi-lst-prep` produces, using the same patch-center coordinates as
-  the other modalities.
-- `overlap_threshold_by_class` lets you override the minimum
-  patch/polygon-overlap fraction per class (e.g. small polygons of a rare
-  class need a lower threshold) instead of hardcoding it per city.
-- **Important**: `inputs.*`/`labels.shp`/`labels.kml` paths in the config are
-  resolved against the process's working directory, *not* the config file's
-  own location (same convention as `heatwise-hsi-lst-prep`'s `wavelength_file`).
-  Keep this in mind when running inside Docker/CWL -- see below.
-
-## Sample data
-
-`data/Berlin/` holds a self-contained test bundle (~57 MB) cropped to the
-HEATWISE Berlin sample boundary (5.4 x 8.1 km): `Berlin_hsi_bs.tif` and
-`Berlin_lst_final.tif` (outputs of `heatwise-hsi-lst-prep` run on its own
-sample data), `Berlin_S2.tif`, and `Berlin_labels.shp` with 17 label
-polygons across 8 LCZ classes. `examples/sample_config.yaml` is a
-ready-to-use config pointing at it. Run from the repo root:
+For local/non-Docker execution, the original configuration-based interface is
+still supported:
 
 ```bash
 python processor.py --config examples/sample_config.yaml
 ```
 
-This produces ~246 patches across 8 classes with a real geo-isolated
-train/val/test split in about a minute.
+In this mode, `inputs.*` in the YAML configuration can directly reference the
+Sentinel-2, HSI, and optional LST/PCA rasters.
+
+For EOAP/Docker/CWL execution, EO raster paths are instead obtained from the
+staged STAC input catalog through `--input-catalog`.
+
+## Processing
+
+For each city, the processor:
+
+1. loads the polygon-based LCZ labels;
+2. reads aligned Sentinel-2 and hyperspectral products, together with optional
+   LST and PCA products;
+3. grid-samples candidate points inside the labeled polygons;
+4. extracts aligned image patches;
+5. filters invalid, empty, out-of-bounds, and insufficient-overlap samples;
+6. performs the geographically isolated train/validation/test split using the
+   configured block and super-block strategy;
+7. writes the resulting patch dataset to HDF5.
+
+Classes for which full geographic isolation is not possible can use the
+configured fallback strategy. The `geo_isolated` field in the HDF5 output
+records whether each sample belongs to a fully spatially isolated split.
+
+## HDF5 output
+
+The generated HDF5 dataset contains:
+
+- `sen2`, `hsi_bs`: patch stacks `(N, H, W, C)`
+- `hsi_pca`: optional PCA patch stack `(N, H, W, C)`
+- `lst`: optional LST patch stack
+- `lst_valid`: per-patch LST validity flag
+- `label`: one-hot labels `(N, num_classes)`, ordered according to
+  `class_order`
+- `split`: `0=train`, `1=val`, `2=test`
+- `geo_isolated`: geographic-isolation flag
+- `coords`: patch-center coordinates in the target CRS
+
+For LST patches, `lst_valid=0` indicates that the original LST window included
+nodata or an out-of-bounds region and required filling.
+
+## EOAP STAC input
+
+For EOAP execution, EO raster products are supplied as a CWL `Directory`
+containing a STAC `catalog.json`, one or more STAC Items, and the referenced
+assets.
+
+The processor expects the relevant STAC Item to contain:
+
+- `sentinel2`: required Sentinel-2 raster
+- `hsi`: required hyperspectral raster
+- `lst`: optional LST raster
+- `pca`: optional PCA raster
+
+Example structure:
+
+```text
+input_catalog/
+├── catalog.json
+├── Berlin_item.json
+├── Berlin_S2.tif
+├── Berlin_hsi_bs.tif
+└── Berlin_lst_final.tif
+```
+
+The Item uses relative asset `href` values so that the complete directory can
+be staged by a CWL runner.
+
+The bundled Berlin sample follows this structure under:
+
+```text
+data/Berlin/
+```
+
+The processor receives the STAC catalog through:
+
+```bash
+--input-catalog /path/to/input_catalog/catalog.json
+```
+
+When `--input-catalog` is supplied, the EO raster paths obtained from STAC
+replace `cfg["inputs"]` from the YAML configuration.
+
+## Configuration
+
+The EOAP/Docker example configuration is:
+
+```text
+examples/sample_config_docker.yaml
+```
+
+It controls processing parameters such as:
+
+- city and target CRS;
+- polygon labels and class mapping;
+- sampling resolution and patch size;
+- polygon-overlap thresholds;
+- geographic split parameters;
+- LST/PCA processing toggles.
+
+EO raster paths are intentionally not included in this configuration because
+they are supplied separately through the staged STAC catalog.
+
+The bundled label shapefile remains a supporting resource in the sample Docker
+image and is referenced through:
+
+```yaml
+labels:
+  shp: /app/data/Berlin/Berlin_labels.shp
+```
+
+## Sample data
+
+`data/Berlin/` contains the self-contained Berlin test bundle:
+
+```text
+Berlin_S2.tif
+Berlin_hsi_bs.tif
+Berlin_lst_final.tif
+
+Berlin_labels.cpg
+Berlin_labels.dbf
+Berlin_labels.prj
+Berlin_labels.shp
+Berlin_labels.shx
+
+catalog.json
+Berlin_item.json
+```
+
+The raster products are referenced by the STAC Item, while the shapefile is
+used as the polygon-based LCZ label source for the bundled example.
+
+## STAC output
+
+After generating the HDF5 dataset, the processor also writes a STAC catalog
+describing the output product.
+
+For example:
+
+```text
+Berlin_patches.h5
+Berlin-patches_item.json
+catalog.json
+```
+
+The STAC Item references the generated HDF5 file as the `patch_h5` asset and
+includes the processor name and software version through the STAC Processing
+extension.
 
 ## Docker
 
-The image is built under its release-shaped name (registry namespace +
-versioned tag, matching the CWL's `dockerPull`), so local tests exercise the
-exact tag that will later be pushed to the registry:
+Build the versioned processor image with:
 
 ```bash
-docker build -t ghcr.io/heatwise-lcz/heatwise-patch-extraction:0.1.1 .
+docker build \
+  -t ghcr.io/heatwise-lcz/heatwise-patch-extraction:0.1.1 \
+  .
+```
+
+The image uses `CMD` as its default command. When additional arguments are
+supplied directly through `docker run`, invoke the processor explicitly:
+
+```bash
+mkdir -p output
 
 docker run --rm \
-  -v /path/to/host/output:/app/output \
+  -v "$(pwd)/data/Berlin:/input:ro" \
+  -v "$(pwd)/output:/output" \
   ghcr.io/heatwise-lcz/heatwise-patch-extraction:0.1.1 \
-  --config examples/sample_config.yaml --output-h5 /app/output/Berlin_patches.h5
+  python /app/processor.py \
+  --config /app/examples/sample_config_docker.yaml \
+  --input-catalog /input/catalog.json \
+  --output-h5 /output/Berlin_patches.h5
 ```
 
-Base image: `python:3.11-slim` + system `libgdal-dev`/`gdal-bin` (needed for
-`geopandas`/`shapely`/`fiona`'s GDAL/GEOS/PROJ linkage), same pattern as
-`heatwise-hsi-lst-prep`.
+This writes the HDF5 product and its STAC metadata to the mounted output
+directory.
 
-> The image has since been built and exercised repeatedly through `cwltool`
-> runs (both standalone and as the `extract_patches` step of
-> `heatwise-lcz-pipeline`).
+The image is based on `python:3.11-slim` and includes the GDAL system
+dependencies required by the geospatial Python stack.
 
-## CWL
+## EO Application Package / CWL
 
-`heatwise_patch_extraction.cwl` describes the same interface (inputs:
-`config` File, `output_h5` string; output: `patch_h5` File).
-`examples/job.yaml` is a ready-to-use job order for the bundled sample data:
+`heatwise_patch_extraction.cwl` is an EOAP-oriented CWL v1.2 Application
+Package.
+
+It contains:
+
+- a top-level `Workflow` with `id: main`;
+- a `CommandLineTool` implementing patch extraction;
+- explicit `baseCommand` and processor arguments;
+- a versioned `DockerRequirement`;
+- documented CWL inputs;
+- staged STAC input as a `Directory`;
+- complete working-directory stage-out as a CWL `Directory`.
+
+The workflow inputs are:
+
+```text
+config         File
+input_catalog  Directory
+output_h5      string
+```
+
+The `input_catalog` directory must contain:
+
+```text
+catalog.json
+```
+
+The CWL passes that catalog to the processor as:
+
+```text
+--input-catalog <staged-directory>/catalog.json
+```
+
+The processor command is defined explicitly by the `CommandLineTool` as:
+
+```text
+python /app/processor.py
+```
+
+The complete CWL working directory is exposed as the workflow output using:
+
+```yaml
+outputs:
+  output:
+    type: Directory
+    outputBinding:
+      glob: "."
+```
+
+This allows the generated HDF5 product, STAC Item, and `catalog.json` to be
+collected together for EOAP stage-out.
+
+## CWL example
+
+The bundled example job is:
+
+```text
+examples/job.yaml
+```
+
+It stages `data/Berlin/` as the STAC input directory:
+
+```yaml
+config:
+  class: File
+  path: sample_config_docker.yaml
+
+input_catalog:
+  class: Directory
+  path: ../data/Berlin
+
+output_h5: Berlin_patches.h5
+```
+
+Run it from the `examples` directory with:
 
 ```bash
-cd examples && cwltool ../heatwise_patch_extraction.cwl job.yaml
+cd examples
+cwltool ../heatwise_patch_extraction.cwl job.yaml
 ```
 
-Because `inputs.*`/`labels.*` paths inside the config resolve against the
-container's working directory rather than the config file's own location,
-the referenced rasters/labels must already exist **inside the Docker image**
-at those exact paths (baked in via `COPY . .`, which is why `data/Berlin/`
-ships in the repo). **Two config variants exist** (same pattern as
-`heatwise-hsi-lst-prep`, learned from an actual `cwltool` run there that
-failed until fixed): `examples/sample_config.yaml` (relative `./data/...`
-paths) for local/non-Docker runs, `examples/sample_config_docker.yaml`
-(absolute `/app/data/...` paths) for Docker/CWL -- `cwltool` runs the
-container with its own empty per-job working directory, not the image's
-`WORKDIR /app`, so relative paths don't resolve there. `examples/job.yaml`
-is wired to the `_docker` variant. The CWL's `arguments` also reference
-`/app/processor.py` by absolute path for the same reason.
+## Automated validation
 
-This repo is simpler than `heatwise-hsi-lst-prep`'s STAC catalog case (no
-`secondaryFiles` juggling needed) because there's only one input file
-(`config`) with paths inside it, not a catalog.json linking to sibling
-item/asset files that `cwltool` would also need to stage.
+The `eoap-compliance` branch includes a GitHub Actions workflow that validates
+the complete Application Package.
 
-> **Rebuild the image before testing this** (`docker build -t
-> ghcr.io/heatwise-lcz/heatwise-patch-extraction:0.1.1 .`): the Dockerfile's `ENTRYPOINT` was
-> just fixed too (`processor.py` -> `/app/processor.py`, absolute). An
-> actual `cwltool` run against this repo failed with `can't open file
-> '/<job-tmp>/processor.py'` because `ENTRYPOINT` args are *appended to*
-> by `docker run` arguments, not replaced (unlike `CMD`) -- so the image's
-> own relative `processor.py` ran (and failed) even though the CWL also
-> (redundantly, and incorrectly) supplied `python /app/processor.py`. Fixed
-> by making ENTRYPOINT itself absolute and removing the redundant
-> `baseCommand`/arguments from this CWL file. `heatwise-hsi-lst-prep`'s CWL
-> doesn't have this problem because its Dockerfile uses `CMD`, not
-> `ENTRYPOINT`, and has been run successfully with `cwltool` end-to-end.
+The automated test performs:
+
+- Python syntax checking;
+- CWL validation with `cwltool`;
+- input STAC validation with PySTAC;
+- Docker image build;
+- end-to-end execution of the bundled CWL example;
+- output STAC validation with PySTAC;
+- verification that an HDF5 product was generated.
+
+The complete bundled Berlin example has been successfully executed through
+this validation workflow.
+
+## Relationship to the HEATWISE LCZ pipeline
+
+This processor operates after `heatwise-hsi-lst-prep` and before
+`heatwise-lcz-classification`.
+
+Conceptually:
+
+```text
+heatwise-hsi-lst-prep
+        ↓
+heatwise-patch-extraction
+        ↓
+heatwise-lcz-classification
+```
+
+One patch-extraction run processes one city. HDF5 products from multiple
+cities can subsequently be used by the LCZ classification stage for training
+and evaluation.
