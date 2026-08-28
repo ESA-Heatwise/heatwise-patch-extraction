@@ -209,11 +209,13 @@ def run_extraction(cfg: dict) -> None:
         super_block_m=split_cfg.get("super_block_m", 2500.0),
         hsi_pca=X_pca, lst=X_lst, lst_valid=X_lst_valid,
     )
-    
+
+    combined_geometry = polygons.to_crs("EPSG:4326").geometry.dropna().union_all()
     catalog_path = write_output_catalog(
         output_h5=output_h5,
         city=city,
-        geometry=polygons.to_crs("EPSG:4327").dissolve().geometry.iloc[0].__geo_interface__,
+        geometry=combined_geometry.__geo_interface__,
+        bbox=combined_geometry.bounds,
     )
     
     print(f"[processor] Output H5: {output_h5}")

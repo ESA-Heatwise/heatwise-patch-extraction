@@ -115,6 +115,7 @@ def write_output_catalog(
     output_h5: str | Path,
     city: str,
     geometry: str | None = None,
+    bbox: list[float] | None = None,
     processor_name: str = PROCESSOR_NAME,
     processor_version: str = PROCESSOR_VERSION,
 ) -> Path:
@@ -140,6 +141,7 @@ def write_output_catalog(
         ],
         "id": item_id,
         "geometry": geometry,
+        "bbox": bbox,
         "properties": {
             "datetime": datetime.now(timezone.utc).isoformat(),
             "processing:software": {
