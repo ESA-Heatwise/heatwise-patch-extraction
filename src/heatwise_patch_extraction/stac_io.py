@@ -161,7 +161,7 @@ def write_output_catalog(
 
     catalog = {
         "type": "Catalog",
-        "stac_version": "1.0.0",
+        "stac_version": "1.1.0",
         "id": f"{processor_name}-output",
         "description": (
             "HEATWISE geographically isolated patch extraction output."
