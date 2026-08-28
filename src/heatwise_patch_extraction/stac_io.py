@@ -135,7 +135,7 @@ def write_output_catalog(
 
     item = {
         "type": "Feature",
-        "stac_version": "1.0.0",
+        "stac_version": "1.1.0",
         "stac_extensions": [
             "https://stac-extensions.github.io/processing/v1.2.0/schema.json"
         ],
