@@ -213,6 +213,7 @@ def run_extraction(cfg: dict) -> None:
     catalog_path = write_output_catalog(
         output_h5=output_h5,
         city=city,
+        geometry=polygons.to_crs("EPSG:4327").dissolve().geometry.iloc[0].__geo_interface__,
     )
     
     print(f"[processor] Output H5: {output_h5}")

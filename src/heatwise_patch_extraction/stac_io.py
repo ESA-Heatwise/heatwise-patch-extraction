@@ -114,6 +114,7 @@ def inputs_from_stac(catalog_path: str | Path, city: str | None = None) -> dict:
 def write_output_catalog(
     output_h5: str | Path,
     city: str,
+    geometry: str | None = None,
     processor_name: str = PROCESSOR_NAME,
     processor_version: str = PROCESSOR_VERSION,
 ) -> Path:
@@ -138,7 +139,7 @@ def write_output_catalog(
             "https://stac-extensions.github.io/processing/v1.2.0/schema.json"
         ],
         "id": item_id,
-        "geometry": None,
+        "geometry": geometry,
         "properties": {
             "datetime": datetime.now(timezone.utc).isoformat(),
             "processing:software": {
