@@ -240,18 +240,19 @@ def main():
         help="Overrides the config's `output.h5_path` if given.",
     )
     args = parser.parse_args()
+
     with open(args.config, "r", encoding="utf-8") as f:
-    cfg = yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
 
     if args.input_catalog:
         cfg["inputs"] = inputs_from_stac(
             args.input_catalog,
             city=cfg.get("city"),
         )
-    
+
     if args.output_h5:
         cfg.setdefault("output", {})["h5_path"] = args.output_h5
-    
+
     run_extraction(cfg)
 
 
