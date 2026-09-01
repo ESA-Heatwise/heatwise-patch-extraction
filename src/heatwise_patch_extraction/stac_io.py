@@ -114,7 +114,7 @@ def inputs_from_stac(catalog_path: str | Path, city: str | None = None) -> dict:
 def write_output_catalog(
     output_h5: str | Path,
     city: str,
-    geometry: str | None = None,
+    geometry: dict | None = None,
     bbox: list[float] | None = None,
     processor_name: str = PROCESSOR_NAME,
     processor_version: str = PROCESSOR_VERSION,
