@@ -241,8 +241,8 @@ def run_extraction(cfg: dict) -> None:
         geometry=combined_geometry.__geo_interface__,
         bbox=list(combined_geometry.bounds),
     )
-print(f"[processor] Output H5: {output_h5}")
-print(f"[processor] Output STAC catalog: {catalog_path}")
+    print(f"[processor] Output H5: {output_h5}")
+    print(f"[processor] Output STAC catalog: {catalog_path}")
 
 def main():
     parser = argparse.ArgumentParser(
