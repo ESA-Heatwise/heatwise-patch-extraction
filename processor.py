@@ -225,9 +225,10 @@ def run_extraction(cfg: dict) -> None:
     ]
     
     patch_footprints = gpd.GeoSeries(
-        patch_geometries,
-        crs=f"EPSG:{target_epsg}",
+    patch_geometries,
+    crs=target_epsg,
     )
+    
     
     combined_geometry = (
         patch_footprints
