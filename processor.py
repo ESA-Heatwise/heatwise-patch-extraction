@@ -18,9 +18,11 @@ import random
 import sys
 from pathlib import Path
 
+import geopandas as gpd
 import numpy as np
 import rasterio
 import yaml
+from shapely.geometry import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -210,16 +212,35 @@ def run_extraction(cfg: dict) -> None:
         hsi_pca=X_pca, lst=X_lst, lst_valid=X_lst_valid,
     )
 
-    combined_geometry = polygons.to_crs("EPSG:4326").geometry.dropna().union_all()
+    half_size = (patch_size * resolution) / 2.0
+
+    patch_geometries = [
+        box(
+            x - half_size,
+            y - half_size,
+            x + half_size,
+            y + half_size,
+        )
+        for x, y in xy
+    ]
+    
+    patch_footprints = gpd.GeoSeries(
+        patch_geometries,
+        crs=f"EPSG:{target_epsg}",
+    )
+    
+    combined_geometry = (
+        patch_footprints
+        .to_crs("EPSG:4326")
+        .union_all()
+    )
+    
     catalog_path = write_output_catalog(
         output_h5=output_h5,
         city=city,
         geometry=combined_geometry.__geo_interface__,
-        bbox=combined_geometry.bounds,
+        bbox=list(combined_geometry.bounds),
     )
-    
-    print(f"[processor] Output H5: {output_h5}")
-    print(f"[processor] Output STAC catalog: {catalog_path}")
 
 
 def main():
