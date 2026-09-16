@@ -108,3 +108,6 @@ jobs:
 
           echo "=== STAC catalogs ==="
           find cwl-output -name catalog.json -print || true
+
+          echo "=== Generated patch STAC Item ==="
+          find cwl-output -name "Berlin-patches_item.json" -exec cat {} \; || true
