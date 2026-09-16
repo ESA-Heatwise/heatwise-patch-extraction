@@ -96,7 +96,7 @@ $graph:
     requirements:
 
       DockerRequirement:
-        dockerPull: ghcr.io/heatwise-lcz/heatwise-patch-extraction:0.1.1
+        dockerPull: ghcr.io/esa-heatwise/heatwise-patch-extraction:eoap-compliance
 
       InlineJavascriptRequirement: {}
 
