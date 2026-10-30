@@ -61,21 +61,19 @@ jobs:
 
     - name: Check that only one line was changed
     - run: |
-      changed=$(edit | diff "${{ env.INPUT_CWL }}" "${{ env.OUTPUT_CWL }}" | grep -c '^>' || true)
-      # If expecting to change multiple lines, adapt the number
-      if [[ $changed -ne 1 ]]; then
-        echo "error: expected 1 changed line in $file, got $changed" >&2
-        exit 1
-      fi
+        changed=$(edit | diff "${{ env.INPUT_CWL }}" "${{ env.OUTPUT_CWL }}" | grep -c '^>' || true)
+        # If expecting to change multiple lines, adapt the number
+        if [[ $changed -ne 1 ]]; then
+          echo "error: expected 1 changed line in $file, got $changed" >&2
+          exit 1
+        fi
       
 
     - name: Build EOAP test image
       run: |
-      name: Build EOAP test image
-        run: |
-          docker build \
-            -t ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }} \
-            .
+        docker build \
+          -t ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }} \
+          .
 
     - name: Create Release
       uses: softprops/action-gh-release@v3
