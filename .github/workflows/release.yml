@@ -63,14 +63,19 @@ jobs:
           fi
 
           # This always modifies the first dockerPull in the document, it may not be applicable if there are multiple.
-          sed "s#dockerPull: [^ ]*#dockerPull: ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }}#" "${{ env.INPUT_CWL }}" > "${{ env.OUTPUT_CWL}}";
+          # version and softwareVersion are set to the same version as the tag.
+          sed \
+            -e "s#dockerPull: [^ ]*#dockerPull: ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }}#"\
+            -e "s#^s:softwareVersion: .*#s:softwareVersion: ${{ env.RELEASE_VERSION }}#" \
+            -e "s#^s:version: .*#s:version: ${{ env.RELEASE_VERSION }}#" \
+               "${{ env.INPUT_CWL }}" > "${{ env.OUTPUT_CWL}}"
 
-      - name: Check that only one line was changed
+      - name: Check that at most 3 lines were changed
         run: |
           changed=$(diff "${{ env.INPUT_CWL }}" "${{ env.OUTPUT_CWL }}" | grep -c '^>' || true)
           # If expecting to change multiple lines, adapt the number
-          if [[ $changed -ne 1 ]]; then
-            echo "error: expected 1 changed line in ${{ env.INPUT_CWL }}, got $changed" >&2
+          if [[ $changed -gt 3 ]]; then
+            echo "error: expected max 3 changed lines in ${{ env.INPUT_CWL }}, got $changed" >&2
             exit 1
           fi
 
