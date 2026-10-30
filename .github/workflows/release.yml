@@ -84,7 +84,7 @@ jobs:
           docker build \
             -t ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }} \
             .
-      - name: Push EOAP test image
+      - name: Push Docker image
         run: |
           docker push \
             ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }}
