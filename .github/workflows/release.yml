@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Create as pre-release'
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: Version name
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/esa-heatwise/heatwise-patch-extraction
+  INPUT_CWL: heatwise_patch_extraction.cwl
+
+jobs:
+  build-push-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+          docker login ghcr.io \
+            -u "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Get release version
+        run: |
+          set -euxo pipefail
+          # cut off leading v and training newline from version number. I.e. tag "v0.0.2" turns into "0.0."
+          RELEASE_VERSION=$(echo ${{ github.ref_name }} | sed 's/v//' | tr -d '\n')
+
+          # If the version number doesn't come from a tag, but a workflow dispatch, use the supplied version instead.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RELEASE_VERSION="${{ inputs.version }}"
+          fi
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> $GITHUB_ENV
+          echo "OUTPUT_CWL=/tmp/$(basename ${{ env.INPUT_CWL }})" >> $GITHUB_ENV
+
+      - name: Show version and output file
+        run: |
+          echo ${{ env.RELEASE_VERSION }}
+          echo ${{ env.OUTPUT_CWL }}
+
+      - name: Create CWL with release version number
+        run: |
+          if [[ $(grep -c "dockerPull" ${{ env.INPUT_CWL }}) -ne 1 ]]; then
+            echo "error: expected single CommandLineTool with DockerRequirement" >&2
+            exit 1
+          fi
+
+          # This always modifies the first dockerPull in the document, it may not be applicable if there are multiple.
+          # version and softwareVersion are set to the same version as the tag.
+          sed \
+            -e "s#dockerPull: [^ ]*#dockerPull: ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }}#"\
+            -e "s#^s:softwareVersion: .*#s:softwareVersion: ${{ env.RELEASE_VERSION }}#" \
+            -e "s#^s:version: .*#s:version: ${{ env.RELEASE_VERSION }}#" \
+               "${{ env.INPUT_CWL }}" > "${{ env.OUTPUT_CWL}}"
+
+      - name: Check that at most 3 lines were changed
+        run: |
+          changed=$(diff "${{ env.INPUT_CWL }}" "${{ env.OUTPUT_CWL }}" | grep -c '^>' || true)
+          # If expecting to change multiple lines, adapt the number
+          if [[ $changed -gt 3 ]]; then
+            echo "error: expected max 3 changed lines in ${{ env.INPUT_CWL }}, got $changed" >&2
+            exit 1
+          fi
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }} \
+            .
+      - name: Push Docker image
+        run: |
+          docker push \
+            ${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            ${{ env.OUTPUT_CWL }}
+            README.md
+            LICENSE
+          prerelease: ${{ inputs.prerelease || false }}
+          tag_name: v${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
